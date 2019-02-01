@@ -1,4 +1,4 @@
-/* -*- P4_16 -*- */
+/*-*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
 
@@ -7,10 +7,7 @@ const bit<16> TYPE_SRCROUTING = 0x1234;
 
 #define MAX_HOPS 9
 
-/*************************************************************************
-*********************** H E A D E R S  ***********************************
-*************************************************************************/
-
+/*headers*/
 typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
@@ -21,6 +18,11 @@ header ethernet_t {
     bit<16>   etherType;
 }
 
+/*
+source_routingの操作のために新たにヘッダを定義
+bos: 0または1の値。0ならば対応するportに渡し、1ならばそこからhostに渡す
+このsrcRouteヘッダをラベルとして流すことにより、簡易的なsource_routingを実現している
+*/
 header srcRoute_t {
     bit<1>    bos;
     bit<15>   port;
@@ -45,21 +47,19 @@ struct metadata {
     /* empty */
 }
 
+
 struct headers {
     ethernet_t              ethernet;
     srcRoute_t[MAX_HOPS]    srcRoutes;
     ipv4_t                  ipv4;
 }
 
-/*************************************************************************
-*********************** P A R S E R  ***********************************
-*************************************************************************/
-
+/*parser*/
 parser MyParser(packet_in packet,
                 out headers hdr,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
-    
+
     state start {
         transition parse_ethernet;
     }
@@ -88,19 +88,12 @@ parser MyParser(packet_in packet,
 }
 
 
-/*************************************************************************
-************   C H E C K S U M    V E R I F I C A T I O N   *************
-*************************************************************************/
-
-control MyVerifyChecksum(inout headers hdr, inout metadata meta) {   
+/*checksum verification*/
+control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
     apply {  }
 }
 
-
-/*************************************************************************
-**************  I N G R E S S   P R O C E S S I N G   *******************
-*************************************************************************/
-
+/*ingress*/
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
@@ -108,7 +101,7 @@ control MyIngress(inout headers hdr,
     action drop() {
         mark_to_drop();
     }
-    
+
     action srcRoute_nhop() {
         standard_metadata.egress_spec = (bit<9>)hdr.srcRoutes[0].port;
         hdr.srcRoutes.pop_front(1);
@@ -121,7 +114,7 @@ control MyIngress(inout headers hdr,
     action update_ttl(){
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
-    
+
     apply {
         if (hdr.srcRoutes[0].isValid()){
             if (hdr.srcRoutes[0].bos == 1){
@@ -133,32 +126,23 @@ control MyIngress(inout headers hdr,
             }
         }else{
             drop();
-        } 
+        }
     }
 }
 
-/*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
-*************************************************************************/
-
+/*egress*/
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
     apply {  }
 }
 
-/*************************************************************************
-*************   C H E C K S U M    C O M P U T A T I O N   **************
-*************************************************************************/
-
+/*checksum computation*/
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
     apply {  }
 }
 
-/*************************************************************************
-***********************  D E P A R S E R  *******************************
-*************************************************************************/
-
+/*deparser*/
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
@@ -167,10 +151,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
     }
 }
 
-/*************************************************************************
-***********************  S W I T C H  *******************************
-*************************************************************************/
-
+/*switch*/
 V1Switch(
 MyParser(),
 MyVerifyChecksum(),
