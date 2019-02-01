@@ -7,7 +7,10 @@ const bit<16> TYPE_SRCROUTING = 0x1234;
 
 #define MAX_HOPS 9
 
-/*headers*/
+/*************************************************************************
+*********************** H E A D E R S  ***********************************
+*************************************************************************/
+
 typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
@@ -16,6 +19,11 @@ header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
     bit<16>   etherType;
+}
+
+header srcRoute_t {
+    bit<1>    bos;
+    bit<15>   port;
 }
 
 header ipv4_t {
@@ -33,45 +41,42 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
-header srcRoute_t {
-    bit<1> bos;
-    bit<15> port;
-}
-
 struct metadata {
     /* empty */
 }
 
 struct headers {
-    ethernet_t   ethernet;
-    ipv4_t       ipv4;
-    srcRoute_t[MAX_HOPS] srcRoutes;
+    ethernet_t              ethernet;
+    srcRoute_t[MAX_HOPS]    srcRoutes;
+    ipv4_t                  ipv4;
 }
 
-/*parser*/
+/*************************************************************************
+*********************** P A R S E R  ***********************************
+*************************************************************************/
+
 parser MyParser(packet_in packet,
                 out headers hdr,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
-
+    
     state start {
         transition parse_ethernet;
     }
 
     state parse_ethernet {
-         packet.extract(hdr.ethernet);
-         transition select(hdr.ethernet.etherType) {
-             TYPE_SRCROTING: trainsition parse_source_routing;
-             default: accept;
-         }
+        packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            TYPE_SRCROUTING: parse_srcRouting;
+            default: accept;
+        }
     }
 
-    state parse_source_routing {
-        packet.extract(hdr.srcRoutes.next){
-            trainsition select(hdr.srcRoutes.last.bos) {
-                1: parse_ipv4;
-                default: accept;
-            }
+    state parse_srcRouting {
+        packet.extract(hdr.srcRoutes.next);
+        transition select(hdr.srcRoutes.last.bos) {
+            1: parse_ipv4;
+            default: parse_srcRouting;
         }
     }
 
@@ -79,21 +84,31 @@ parser MyParser(packet_in packet,
         packet.extract(hdr.ipv4);
         transition accept;
     }
+
 }
 
-/*checksum verification*/
-control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
+
+/*************************************************************************
+************   C H E C K S U M    V E R I F I C A T I O N   *************
+*************************************************************************/
+
+control MyVerifyChecksum(inout headers hdr, inout metadata meta) {   
     apply {  }
 }
 
-/*ingress processing*/
+
+/*************************************************************************
+**************  I N G R E S S   P R O C E S S I N G   *******************
+*************************************************************************/
+
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+
     action drop() {
         mark_to_drop();
     }
-
+    
     action srcRoute_nhop() {
         standard_metadata.egress_spec = (bit<9>)hdr.srcRoutes[0].port;
         hdr.srcRoutes.pop_front(1);
@@ -106,35 +121,44 @@ control MyIngress(inout headers hdr,
     action update_ttl(){
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
-
+    
     apply {
-        if(hdr.srcRoutes[0].isValid()){
-            if(hdr.srcRoutes[0].bos==1){
+        if (hdr.srcRoutes[0].isValid()){
+            if (hdr.srcRoutes[0].bos == 1){
                 srcRoute_finish();
             }
             srcRoute_nhop();
-            if(hdr.ipv4.isValid()){
+            if (hdr.ipv4.isValid()){
                 update_ttl();
-            }else{
-                drop();
             }
-        }
+        }else{
+            drop();
+        } 
     }
 }
 
-/*egress processing*/
+/*************************************************************************
+****************  E G R E S S   P R O C E S S I N G   *******************
+*************************************************************************/
+
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
     apply {  }
 }
 
-/*checksum computation*/
-control MyComputeChecksum(inout headers hdr, inout metadata meta) {
-    apply { }
+/*************************************************************************
+*************   C H E C K S U M    C O M P U T A T I O N   **************
+*************************************************************************/
+
+control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
+    apply {  }
 }
 
-/*deparser*/
+/*************************************************************************
+***********************  D E P A R S E R  *******************************
+*************************************************************************/
+
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
@@ -143,7 +167,10 @@ control MyDeparser(packet_out packet, in headers hdr) {
     }
 }
 
-/*switch*/
+/*************************************************************************
+***********************  S W I T C H  *******************************
+*************************************************************************/
+
 V1Switch(
 MyParser(),
 MyVerifyChecksum(),
